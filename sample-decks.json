@@ -1,0 +1,101 @@
+[
+  {
+    "deckName": "Measurement Fundamentals",
+    "deckDescription": "Core concepts of software measurement, definitions, scales, entities, attributes, and representation theory.",
+    "cards": [
+      { "question": "What is measurement in software metrics?", "answer": "Measurement is the process by which numbers or symbols are assigned to attributes of entities in the real world according to clearly defined rules.", "topic": "Definition" },
+      { "question": "What is an entity in software measurement?", "answer": "An entity is an object or event in the real world, such as a project, software product, tester, or process.", "topic": "Definition" },
+      { "question": "What is an attribute in software measurement?", "answer": "An attribute is a feature or property of an entity, such as size, cost, reliability, maintainability, or duration.", "topic": "Definition" },
+      { "question": "Do we measure entities directly?", "answer": "No. We measure attributes of entities, not the entities themselves.", "topic": "Concept" },
+      { "question": "What is the representational theory of measurement?", "answer": "It states that measurement is a mapping from the empirical world to the formal relational world, preserving relationships observed in reality.", "topic": "Theory" },
+      { "question": "What is the representation condition?", "answer": "The behavior of measures in the number system should be the same as the corresponding elements in the real world.", "topic": "Theory" },
+      { "question": "Give the height example of representation condition.", "answer": "A is taller than B if and only if M(A) > M(B), where M is the measurement mapping.", "topic": "Example" },
+      { "question": "Why must LOC counting rules be explicit?", "answer": "Because different counting rules produce different results depending on whether blank lines, comments, declarations, or generated code are included.", "topic": "LOC" }
+    ]
+  },
+  {
+    "deckName": "GQM Framework",
+    "deckDescription": "Goal Question Metric framework, goal-based measurement, entities, internal vs external attributes.",
+    "cards": [
+      { "question": "What is the main idea of goal-based measurement?", "answer": "The focus is not 'What measurements should I use?' but rather 'What do I need to improve?'", "topic": "GQM" },
+      { "question": "What does GQM stand for?", "answer": "Goal, Question, Metric.", "topic": "GQM" },
+      { "question": "What is a Goal in GQM?", "answer": "A major objective of a development, maintenance project, or study.", "topic": "Goal" },
+      { "question": "What is a Question in GQM?", "answer": "Questions derived from each goal to determine whether the goals are being met.", "topic": "Question" },
+      { "question": "What is a Metric in GQM?", "answer": "The specific measurement needed to answer the questions adequately.", "topic": "Metric" },
+      { "question": "What are the three main entity types in GQM?", "answer": "Process, Product, and Resource.", "topic": "Entities" },
+      { "question": "What is an internal attribute?", "answer": "An attribute measured entirely from the entity itself, without considering its environment. Example: product size.", "topic": "Attributes" },
+      { "question": "What is an external attribute?", "answer": "An attribute measured based on how the entity relates to its environment. Example: product quality.", "topic": "Attributes" },
+      { "question": "Why are internal attributes important?", "answer": "They are often used to predict external attributes like quality, reliability, and maintainability.", "topic": "Prediction" }
+    ]
+  },
+  {
+    "deckName": "Empirical Studies",
+    "deckDescription": "Survey, case study, experiment, hypothesis, variables, and threats to validity.",
+    "cards": [
+      { "question": "What are the three main empirical study types?", "answer": "Survey, Case Study, and Experiment.", "topic": "Study Types" },
+      { "question": "What is a survey?", "answer": "A retrospective study used to document relationships and outcomes where there is no control over variables.", "topic": "Survey" },
+      { "question": "What is a case study?", "answer": "A quasi-experiment where key factors affecting outcomes are identified and documented in a real context.", "topic": "Case Study" },
+      { "question": "What is an experiment?", "answer": "A controlled study testing hypotheses by manipulating independent variables and measuring dependent variables.", "topic": "Experiment" },
+      { "question": "Which study type has the highest control over variables?", "answer": "Formal experiment.", "topic": "Control" },
+      { "question": "Which study type is research in the large?", "answer": "Survey.", "topic": "Scale" },
+      { "question": "Which study type is research in the small?", "answer": "Experiment.", "topic": "Scale" },
+      { "question": "What is internal validity?", "answer": "It refers to whether the treatment actually caused the observed effect in dependent variables.", "topic": "Validity" },
+      { "question": "What is external validity?", "answer": "It refers to how well results can be generalized to the wider world.", "topic": "Validity" },
+      { "question": "What is construct validity?", "answer": "It concerns whether the measures used are relevant and meaningful for the study.", "topic": "Validity" },
+      { "question": "What is conclusion validity?", "answer": "It concerns whether correct statistical conclusions are made, avoiding wrong tests or too small samples.", "topic": "Validity" }
+    ]
+  },
+  {
+    "deckName": "Size Metrics",
+    "deckDescription": "LOC, design size, requirements size, functional size, function points.",
+    "cards": [
+      { "question": "Why is software size important?", "answer": "Because it helps predict effort, productivity, defect density, cost, and testing effort.", "topic": "Size" },
+      { "question": "What are the properties of valid software size measures?", "answer": "Non-negativity, null value, and additivity.", "topic": "Properties" },
+      { "question": "What is LOC?", "answer": "Lines of Code, the most common measure of source code size.", "topic": "LOC" },
+      { "question": "What is NCLOC?", "answer": "Non-commented source lines of code, also called effective lines of code (ELOC).", "topic": "LOC" },
+      { "question": "What is CLOC?", "answer": "Commented source lines of code.", "topic": "LOC" },
+      { "question": "What is the formula for total LOC?", "answer": "LOC = NCLOC + CLOC", "topic": "Formula" },
+      { "question": "What does CLOC/LOC measure?", "answer": "The density of comments in a program.", "topic": "Formula" },
+      { "question": "How can requirements size be measured?", "answer": "Using number of pages, number of requirements, use cases, features, actors, or goals.", "topic": "Requirements" },
+      { "question": "Why can length be misleading as a size measure?", "answer": "Because functionality may better represent the real size and complexity of the software.", "topic": "Limitation" }
+    ]
+  },
+  {
+    "deckName": "Function Points",
+    "deckDescription": "Functional size measures and function point calculation.",
+    "cards": [
+      { "question": "What is a Function Point (FP)?", "answer": "A weighted measure of software functionality based on the system specification.", "topic": "FP" },
+      { "question": "How is FP calculated?", "answer": "FP = UFC × TCF", "topic": "Formula" },
+      { "question": "What does UFC mean?", "answer": "Unadjusted Function Point Count.", "topic": "FP" },
+      { "question": "What does TCF mean?", "answer": "Technical Complexity Factor.", "topic": "FP" },
+      { "question": "What are the five FP component types?", "answer": "External Inputs, External Outputs, External Inquiries, External Files, Internal Files.", "topic": "Components" },
+      { "question": "How is complexity rated in Function Points?", "answer": "Using a three-point ordinal scale: Simple, Average, Complex.", "topic": "Complexity" }
+    ]
+  },
+  {
+    "deckName": "Quality Metrics",
+    "deckDescription": "Software quality models, ISO standards, defect density and external attributes.",
+    "cards": [
+      { "question": "What is ISO 9126 definition of software quality?", "answer": "The totality of features and characteristics of a software product that bear on its ability to satisfy stated or implied needs.", "topic": "ISO" },
+      { "question": "What are the 6 ISO 9126 quality characteristics?", "answer": "Functionality, Reliability, Efficiency, Usability, Maintainability, Portability.", "topic": "ISO" },
+      { "question": "What are the 8 ISO 25010 quality characteristics?", "answer": "Functional suitability, Performance efficiency, Compatibility, Usability, Reliability, Security, Maintainability, Portability.", "topic": "ISO" },
+      { "question": "What is defect density?", "answer": "Defect Density = Number of Defects / Product Size", "topic": "Formula" },
+      { "question": "Why is defect density useful?", "answer": "It helps compare software quality relative to product size rather than absolute number of defects.", "topic": "Quality" },
+      { "question": "What is system spoilage?", "answer": "System spoilage = Time to fix post-release defects / Total system development time", "topic": "Formula" },
+      { "question": "What is the difference between a fault and a failure?", "answer": "A fault is a defect in the code/design; a failure is the incorrect behavior observed when the software runs.", "topic": "Defects" }
+    ]
+  },
+  {
+    "deckName": "Agile and Estimation",
+    "deckDescription": "Agile metrics, planning poker, estimation approaches, cone of uncertainty.",
+    "cards": [
+      { "question": "What does software project planning include?", "answer": "Estimation, scheduling, risk analysis, quality management planning, and change management planning.", "topic": "Planning" },
+      { "question": "What is the Cone of Uncertainty?", "answer": "It shows that estimation uncertainty is highest early in the project and decreases as development progresses.", "topic": "Estimation" },
+      { "question": "What are the two estimation approaches?", "answer": "Top-down and Bottom-up.", "topic": "Estimation" },
+      { "question": "What is Planning Poker?", "answer": "A group estimation technique used by agile teams to estimate effort during sprint or release planning.", "topic": "Agile" },
+      { "question": "What does Planning Poker combine?", "answer": "Expert opinion, analogy, and disaggregation.", "topic": "Agile" },
+      { "question": "What is the most common Planning Poker scale?", "answer": "Fibonacci scale: 1, 2, 3, 5, 8, 13, 21...", "topic": "Agile" },
+      { "question": "Why are cards selected privately in Planning Poker?", "answer": "To avoid bias and group influence before estimates are revealed.", "topic": "Agile" }
+    ]
+  }
+]

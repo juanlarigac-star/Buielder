@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlashLearn – Flashcard Study App</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .flip-card { perspective: 1000px; min-height: 260px; }
+    .flip-inner {
+      position: relative; width: 100%; min-height: 260px;
+      transition: transform 0.55s cubic-bezier(.4,0,.2,1);
+      transform-style: preserve-3d;
+    }
+    .flip-inner.flipped { transform: rotateY(180deg); }
+    .flip-face {
+      position: absolute; top: 0; left: 0; width: 100%; min-height: 260px;
+      backface-visibility: hidden; -webkit-backface-visibility: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .flip-back { transform: rotateY(180deg); }
+    .fade-in { animation: fadeIn .2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const now = () => new Date().toISOString();
+const fmt = (iso) => iso ? new Date(iso).toLocaleDateString() : '—';
+
+// ─── Storage Service ──────────────────────────────────────────────────────────
+const storage = {
+  getDecks() {
+    try { return JSON.parse(localStorage.getItem('fl_decks') || '[]'); } catch { return []; }
+  },
+  saveDecks(decks) {
+    localStorage.setItem('fl_decks', JSON.stringify(decks));
+  },
+  getCards(deckId) {
+    try {
+      const all = JSON.parse(localStorage.getItem('fl_cards') || '{}');
+      return all[deckId] || [];
+    } catch { return []; }
+  },
+  getAllCards() {
+    try { return JSON.parse(localStorage.getItem('fl_cards') || '{}'); } catch { return {}; }
+  },
+  saveCards(deckId, cards) {
+    const all = this.getAllCards();
+    all[deckId] = cards;
+    localStorage.setItem('fl_cards', JSON.stringify(all));
+  },
+  deleteCardsByDeck(deckId) {
+    const all = this.getAllCards();
+    delete all[deckId];
+    localStorage.setItem('fl_cards', JSON.stringify(all));
+  }
+};
+
+// ─── Study Algorithm ──────────────────────────────────────────────────────────
+const PRIORITY = { hard: 4, new: 3, medium: 2, easy: 1 };
+
+function getStudyQueue(cards) {
+  const scored = cards.map(c => ({
+    ...c,
+    _priority: PRIORITY[c.difficulty] ?? PRIORITY.new
+  }));
+  scored.sort((a, b) => b._priority - a._priority || Math.random() - 0.5);
+  return scored;
+}
+
+// ─── Shared UI helpers ────────────────────────────────────────────────────────
+const DIFF_STYLES = {
+  new:    'bg-blue-100 text-blue-700',
+  easy:   'bg-green-100 text-green-700',
+  medium: 'bg-amber-100 text-amber-700',
+  hard:   'bg-red-100 text-red-700',
+};
+const DIFF_LABEL = { new: 'New', easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+
+function Badge({ diff }) {
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${DIFF_STYLES[diff] || DIFF_STYLES.new}`}>
+      {DIFF_LABEL[diff] || 'New'}
+    </span>
+  );
+}
+
+function ProgressBar({ value, max, color = 'bg-indigo-500' }) {
+  const pct = max === 0 ? 0 : Math.round((value / max) * 100);
+  return (
+    <div className="w-full bg-slate-200 rounded-full h-2">
+      <div className={`${color} h-2 rounded-full transition-all duration-500`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} fade-in`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, desc }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="text-5xl mb-4">{icon}</div>
+      <h3 className="text-lg font-semibold text-slate-700 mb-1">{title}</h3>
+      <p className="text-sm text-slate-400 max-w-xs">{desc}</p>
+    </div>
+  );
+}
+
+// ─── Deck Form Modal ──────────────────────────────────────────────────────────
+function DeckFormModal({ deck, onSave, onClose }) {
+  const [name, setName] = useState(deck?.name || '');
+  const [desc, setDesc] = useState(deck?.description || '');
+  const nameRef = useRef(null);
+  useEffect(() => { nameRef.current?.focus(); }, []);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onSave({ name: name.trim(), description: desc.trim() });
+  };
+
+  return (
+    <Modal title={deck ? 'Edit Deck' : 'Create New Deck'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Deck Name <span className="text-red-400">*</span></label>
+          <input
+            ref={nameRef}
+            value={name} onChange={e => setName(e.target.value)}
+            placeholder="e.g. Software Metrics Exam"
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            maxLength={80}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Description <span className="text-slate-400 font-normal">(optional)</span></label>
+          <textarea
+            value={desc} onChange={e => setDesc(e.target.value)}
+            placeholder="Short description of what this deck covers…"
+            rows={3}
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+            maxLength={300}
+          />
+        </div>
+        <div className="flex gap-3 pt-1">
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-xl border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+            Cancel
+          </button>
+          <button type="submit" disabled={!name.trim()}
+            className="flex-1 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            {deck ? 'Save Changes' : 'Create Deck'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Card Form Modal ──────────────────────────────────────────────────────────
+function CardFormModal({ card, onSave, onClose }) {
+  const [question, setQuestion] = useState(card?.question || '');
+  const [answer, setAnswer] = useState(card?.answer || '');
+  const [topic, setTopic] = useState(card?.topic || '');
+  const qRef = useRef(null);
+  useEffect(() => { qRef.current?.focus(); }, []);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!question.trim() || !answer.trim()) return;
+    onSave({ question: question.trim(), answer: answer.trim(), topic: topic.trim() });
+  };
+
+  return (
+    <Modal title={card ? 'Edit Flashcard' : 'Add Flashcard'} onClose={onClose} wide>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Question <span className="text-red-400">*</span></label>
+          <textarea
+            ref={qRef}
+            value={question} onChange={e => setQuestion(e.target.value)}
+            placeholder="Type your question here…"
+            rows={3}
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Answer <span className="text-red-400">*</span></label>
+          <textarea
+            value={answer} onChange={e => setAnswer(e.target.value)}
+            placeholder="Type the answer here…"
+            rows={4}
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Topic / Category <span className="text-slate-400 font-normal">(optional)</span></label>
+          <input
+            value={topic} onChange={e => setTopic(e.target.value)}
+            placeholder="e.g. Definitions, Formulas…"
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            maxLength={60}
+          />
+        </div>
+        <div className="flex gap-3 pt-1">
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-xl border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+            Cancel
+          </button>
+          <button type="submit" disabled={!question.trim() || !answer.trim()}
+            className="flex-1 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            {card ? 'Save Changes' : 'Add Card'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+function ConfirmModal({ title, message, confirmLabel = 'Delete', onConfirm, onClose }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="text-sm text-slate-600 mb-6">{message}</p>
+      <div className="flex gap-3">
+        <button onClick={onClose}
+          className="flex-1 px-4 py-2 rounded-xl border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+          Cancel
+        </button>
+        <button onClick={onConfirm}
+          className="flex-1 px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors">
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Home Screen – Deck List ──────────────────────────────────────────────────
+function DeckListScreen({ decks, onSelectDeck, onCreateDeck, onEditDeck, onDeleteDeck, onImport }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() =>
+    decks.filter(d => d.name.toLowerCase().includes(search.toLowerCase()) ||
+      d.description?.toLowerCase().includes(search.toLowerCase())),
+    [decks, search]
+  );
+
+  const getDeckStats = (deckId) => {
+    const cards = storage.getCards(deckId);
+    const total = cards.length;
+    const reviewed = cards.filter(c => c.timesReviewed > 0).length;
+    const byDiff = { easy: 0, medium: 0, hard: 0, new: 0 };
+    cards.forEach(c => { byDiff[c.difficulty] = (byDiff[c.difficulty] || 0) + 1; });
+    return { total, reviewed, ...byDiff };
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-8 fade-in">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <span className="text-3xl">🧠</span> FlashLearn
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">Your personal flashcard study app</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-600 text-sm font-medium rounded-xl hover:bg-slate-50 transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Import
+          </button>
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            New Deck
+          </button>
+        </div>
+      </div>
+
+      {/* Search */}
+      {decks.length > 0 && (
+        <div className="relative mb-6">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search decks…"
+            className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+        </div>
+      )}
+
+      {/* Deck Grid */}
+      {decks.length === 0 ? (
+        <EmptyState icon="📚" title="No decks yet" desc="Create your first deck to start adding flashcards and studying." />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="🔍" title="No decks found" desc="Try a different search term." />
+      ) : (
+        <div className="grid gap-4">
+          {filtered.map(deck => {
+            const stats = getDeckStats(deck.id);
+            const pct = stats.total === 0 ? 0 : Math.round((stats.reviewed / stats.total) * 100);
+            return (
+              <div key={deck.id}
+                className="bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group"
+                onClick={() => onSelectDeck(deck.id)}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0 pr-4">
+                    <h2 className="font-semibold text-slate-800 truncate text-lg group-hover:text-indigo-700 transition-colors">{deck.name}</h2>
+                    {deck.description && (
+                      <p className="text-sm text-slate-500 mt-0.5 truncate">{deck.description}</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-1">Created {fmt(deck.createdAt)}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                    <button onClick={() => setEditTarget(deck)}
+                      className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                    <button onClick={() => setDeleteTarget(deck)}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stats row */}
+                <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
+                  <span className="font-medium">{stats.total} card{stats.total !== 1 ? 's' : ''}</span>
+                  {stats.hard > 0 && <span className="text-red-500 font-medium">🔴 {stats.hard} hard</span>}
+                  {stats.medium > 0 && <span className="text-amber-500 font-medium">🟡 {stats.medium} medium</span>}
+                  {stats.easy > 0 && <span className="text-green-500 font-medium">🟢 {stats.easy} easy</span>}
+                  {stats.new > 0 && <span className="text-blue-500 font-medium">🔵 {stats.new} new</span>}
+                </div>
+
+                {/* Progress */}
+                {stats.total > 0 && (
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                      <span>Progress</span>
+                      <span>{pct}% reviewed</span>
+                    </div>
+                    <ProgressBar value={stats.reviewed} max={stats.total} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modals */}
+      {showImport && (
+        <ImportModal
+          existingDeckNames={decks.map(d => d.name)}
+          onImport={(data) => { onImport(data); setShowImport(false); }}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+      {showCreate && (
+        <DeckFormModal
+          onSave={(data) => { onCreateDeck(data); setShowCreate(false); }}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
+      {editTarget && (
+        <DeckFormModal
+          deck={editTarget}
+          onSave={(data) => { onEditDeck(editTarget.id, data); setEditTarget(null); }}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete Deck"
+          message={`Are you sure you want to delete "${deleteTarget.name}" and all its cards? This cannot be undone.`}
+          onConfirm={() => { onDeleteDeck(deleteTarget.id); setDeleteTarget(null); }}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Import Modal ─────────────────────────────────────────────────────────────
+function ImportModal({ existingDeckNames, onImport, onClose }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null);
+  const fileRef = useRef(null);
+
+  const parse = (raw) => {
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) throw new Error('JSON must be an array of deck objects.');
+    data.forEach((d, i) => {
+      if (!d.deckName) throw new Error(`Item ${i + 1} is missing "deckName".`);
+      if (!Array.isArray(d.cards)) throw new Error(`Deck "${d.deckName}" is missing "cards" array.`);
+      d.cards.forEach((c, j) => {
+        if (!c.question || !c.answer) throw new Error(`Card ${j + 1} in "${d.deckName}" is missing "question" or "answer".`);
+      });
+    });
+    return data;
+  };
+
+  const handleText = (val) => {
+    setText(val);
+    setError('');
+    setPreview(null);
+    if (!val.trim()) return;
+    try { setPreview(parse(val)); }
+    catch (e) { setError(e.message); }
+  };
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => handleText(ev.target.result);
+    reader.readAsText(file);
+  };
+
+  const duplicates = preview ? preview.filter(d => existingDeckNames.includes(d.deckName)) : [];
+  const totalCards = preview ? preview.reduce((sum, d) => sum + d.cards.length, 0) : 0;
+
+  return (
+    <Modal title="Import Decks from JSON" onClose={onClose} wide>
+      <div className="space-y-4">
+        {/* File upload */}
+        <div>
+          <p className="text-sm font-medium text-slate-700 mb-2">Upload a JSON file</p>
+          <label className="flex items-center gap-3 cursor-pointer border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-xl px-4 py-3 transition-colors group">
+            <svg className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span className="text-sm text-slate-500 group-hover:text-indigo-600">
+              {fileRef.current?.files?.[0]?.name || 'Click to choose a .json file'}
+            </span>
+            <input ref={fileRef} type="file" accept=".json,application/json" className="sr-only" onChange={handleFile} />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <hr className="flex-1 border-slate-200" />
+          <span className="text-xs text-slate-400 font-medium">or paste JSON</span>
+          <hr className="flex-1 border-slate-200" />
+        </div>
+
+        {/* Textarea */}
+        <div>
+          <textarea
+            value={text}
+            onChange={e => handleText(e.target.value)}
+            placeholder={'[\n  {\n    "deckName": "My Deck",\n    "deckDescription": "...",\n    "cards": [\n      { "question": "...", "answer": "...", "topic": "..." }\n    ]\n  }\n]'}
+            rows={7}
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+          />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+            <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-xs text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* Preview */}
+        {preview && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-700">Ready to import</p>
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                {preview.length} deck{preview.length !== 1 ? 's' : ''} · {totalCards} cards
+              </span>
+            </div>
+            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+              {preview.map((d, i) => {
+                const isDup = existingDeckNames.includes(d.deckName);
+                return (
+                  <div key={i} className="flex items-center justify-between bg-white rounded-lg border border-slate-200 px-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-medium text-slate-700 truncate">{d.deckName}</span>
+                      {isDup && (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full shrink-0">duplicate name</span>
+                      )}
+                    </div>
+                    <span className="text-xs text-slate-400 shrink-0 ml-2">{d.cards.length} cards</span>
+                  </div>
+                );
+              })}
+            </div>
+            {duplicates.length > 0 && (
+              <p className="text-xs text-amber-600">
+                ⚠ {duplicates.length} deck{duplicates.length !== 1 ? 's' : ''} with the same name already exist — they will be imported as separate decks.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-1">
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-xl border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+            Cancel
+          </button>
+          <button onClick={() => onImport(preview)} disabled={!preview}
+            className="flex-1 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Import {preview ? `${preview.length} Deck${preview.length !== 1 ? 's' : ''}` : ''}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Deck Detail Screen ────────────────────────────────────────────────────────
+function DeckDetailScreen({ deck, onBack, onStartStudy, onViewProgress }) {
+  const [cards, setCards] = useState(() => storage.getCards(deck.id));
+  const [showAdd, setShowAdd] = useState(false);
+  const [editCard, setEditCard] = useState(null);
+  const [deleteCard, setDeleteCard] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterDiff, setFilterDiff] = useState('all');
+  const [filterTopic, setFilterTopic] = useState('all');
+
+  const reload = () => setCards(storage.getCards(deck.id));
+
+  const addCard = (data) => {
+    const newCard = {
+      id: uid(), deckId: deck.id,
+      question: data.question, answer: data.answer, topic: data.topic,
+      difficulty: 'new', timesReviewed: 0, lastReviewedAt: null,
+      createdAt: now()
+    };
+    const updated = [...cards, newCard];
+    storage.saveCards(deck.id, updated);
+    setCards(updated);
+    setShowAdd(false);
+  };
+
+  const updateCard = (id, data) => {
+    const updated = cards.map(c => c.id === id ? { ...c, ...data } : c);
+    storage.saveCards(deck.id, updated);
+    setCards(updated);
+    setEditCard(null);
+  };
+
+  const removeCard = (id) => {
+    const updated = cards.filter(c => c.id !== id);
+    storage.saveCards(deck.id, updated);
+    setCards(updated);
+    setDeleteCard(null);
+  };
+
+  const topics = useMemo(() => ['all', ...new Set(cards.map(c => c.topic).filter(Boolean))], [cards]);
+
+  const filtered = useMemo(() => cards.filter(c => {
+    const matchSearch = !search || c.question.toLowerCase().includes(search.toLowerCase()) ||
+      c.answer.toLowerCase().includes(search.toLowerCase()) ||
+      c.topic?.toLowerCase().includes(search.toLowerCase());
+    const matchDiff = filterDiff === 'all' || c.difficulty === filterDiff;
+    const matchTopic = filterTopic === 'all' || c.topic === filterTopic;
+    return matchSearch && matchDiff && matchTopic;
+  }), [cards, search, filterDiff, filterTopic]);
+
+  const stats = useMemo(() => {
+    const reviewed = cards.filter(c => c.timesReviewed > 0).length;
+    const byDiff = { easy: 0, medium: 0, hard: 0, new: 0 };
+    cards.forEach(c => { byDiff[c.difficulty] = (byDiff[c.difficulty] || 0) + 1; });
+    return { total: cards.length, reviewed, ...byDiff };
+  }, [cards]);
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-8 fade-in">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={onBack}
+          className="p-2 rounded-xl hover:bg-slate-200 text-slate-500 transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl font-bold text-slate-800 truncate">{deck.name}</h1>
+          {deck.description && <p className="text-sm text-slate-500 truncate">{deck.description}</p>}
+        </div>
+      </div>
+
+      {/* Stats summary */}
+      <div className="grid grid-cols-4 gap-3 mb-6">
+        {[
+          { label: 'Total', value: stats.total, color: 'text-slate-700', bg: 'bg-slate-50' },
+          { label: 'Hard', value: stats.hard, color: 'text-red-600', bg: 'bg-red-50' },
+          { label: 'Medium', value: stats.medium, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Easy', value: stats.easy, color: 'text-green-600', bg: 'bg-green-50' },
+        ].map(s => (
+          <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+            <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-3 mb-6">
+        <button onClick={() => onStartStudy(deck.id)}
+          disabled={cards.length === 0}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-xl font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Study Now
+        </button>
+        <button onClick={() => onViewProgress(deck.id)}
+          disabled={stats.reviewed === 0}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-600 rounded-xl font-medium text-sm hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          Progress
+        </button>
+        <button onClick={() => setShowAdd(true)}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-indigo-300 text-indigo-600 rounded-xl font-medium text-sm hover:bg-indigo-50 transition-colors">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Add Card
+        </button>
+      </div>
+
+      {/* Filters */}
+      {cards.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <div className="relative flex-1 min-w-48">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search cards…"
+              className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+          <select value={filterDiff} onChange={e => setFilterDiff(e.target.value)}
+            className="border border-slate-200 rounded-lg text-sm px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="all">All Difficulties</option>
+            <option value="new">New</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          {topics.length > 1 && (
+            <select value={filterTopic} onChange={e => setFilterTopic(e.target.value)}
+              className="border border-slate-200 rounded-lg text-sm px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+              <option value="all">All Topics</option>
+              {topics.slice(1).map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
+      {/* Card list */}
+      {cards.length === 0 ? (
+        <EmptyState icon="🃏" title="No cards yet" desc='Click "Add Card" to start building your flashcard deck.' />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="🔍" title="No cards match your filters" desc="Try adjusting your search or filters." />
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(card => (
+            <div key={card.id}
+              className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-sm transition-shadow">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 line-clamp-2">{card.question}</p>
+                  <p className="text-sm text-slate-500 mt-1 line-clamp-2">{card.answer}</p>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <Badge diff={card.difficulty} />
+                    {card.topic && (
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{card.topic}</span>
+                    )}
+                    {card.timesReviewed > 0 && (
+                      <span className="text-xs text-slate-400">Reviewed {card.timesReviewed}×</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => setEditCard(card)}
+                    className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                  <button onClick={() => setDeleteCard(card)}
+                    className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modals */}
+      {showAdd && <CardFormModal onSave={addCard} onClose={() => setShowAdd(false)} />}
+      {editCard && (
+        <CardFormModal
+          card={editCard}
+          onSave={(data) => updateCard(editCard.id, data)}
+          onClose={() => setEditCard(null)}
+        />
+      )}
+      {deleteCard && (
+        <ConfirmModal
+          title="Delete Card"
+          message={`Delete this card? "${deleteCard.question.slice(0, 60)}${deleteCard.question.length > 60 ? '…' : ''}"`}
+          onConfirm={() => removeCard(deleteCard.id)}
+          onClose={() => setDeleteCard(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Study Mode Screen ────────────────────────────────────────────────────────
+function StudyModeScreen({ deck, onFinish }) {
+  const [queue, setQueue] = useState(() => getStudyQueue(storage.getCards(deck.id)));
+  const [index, setIndex] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [sessionStats, setSessionStats] = useState({ easy: 0, medium: 0, hard: 0 });
+  const [done, setDone] = useState(false);
+  const [flipped, setFlipped] = useState(false);
+
+  const total = queue.length;
+  const card = queue[index];
+
+  const revealAnswer = () => {
+    setFlipped(true);
+    setTimeout(() => setRevealed(true), 280);
+  };
+
+  const rate = (diff) => {
+    // Update card in storage
+    const allCards = storage.getCards(deck.id);
+    const updated = allCards.map(c =>
+      c.id === card.id
+        ? { ...c, difficulty: diff, timesReviewed: c.timesReviewed + 1, lastReviewedAt: now() }
+        : c
+    );
+    storage.saveCards(deck.id, updated);
+
+    setSessionStats(s => ({ ...s, [diff]: s[diff] + 1 }));
+
+    if (index + 1 >= total) {
+      setDone(true);
+    } else {
+      setFlipped(false);
+      setRevealed(false);
+      setTimeout(() => setIndex(i => i + 1), 50);
+    }
+  };
+
+  if (done) {
+    const reviewed = sessionStats.easy + sessionStats.medium + sessionStats.hard;
+    return (
+      <div className="max-w-lg mx-auto px-4 py-16 text-center fade-in">
+        <div className="text-6xl mb-4">🎉</div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-2">Session Complete!</h1>
+        <p className="text-slate-500 mb-8">You reviewed {reviewed} card{reviewed !== 1 ? 's' : ''} from <strong>{deck.name}</strong>.</p>
+
+        <div className="grid grid-cols-3 gap-4 mb-8">
+          <div className="bg-green-50 rounded-2xl p-4">
+            <div className="text-3xl font-bold text-green-600">{sessionStats.easy}</div>
+            <div className="text-xs text-green-700 mt-1 font-medium">Easy</div>
+          </div>
+          <div className="bg-amber-50 rounded-2xl p-4">
+            <div className="text-3xl font-bold text-amber-600">{sessionStats.medium}</div>
+            <div className="text-xs text-amber-700 mt-1 font-medium">Medium</div>
+          </div>
+          <div className="bg-red-50 rounded-2xl p-4">
+            <div className="text-3xl font-bold text-red-600">{sessionStats.hard}</div>
+            <div className="text-xs text-red-700 mt-1 font-medium">Hard</div>
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-center">
+          <button onClick={onFinish}
+            className="px-6 py-2.5 border border-slate-300 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+            Back to Deck
+          </button>
+          <button onClick={() => {
+            const fresh = getStudyQueue(storage.getCards(deck.id));
+            setQueue(fresh);
+            setIndex(0);
+            setRevealed(false);
+            setFlipped(false);
+            setSessionStats({ easy: 0, medium: 0, hard: 0 });
+            setDone(false);
+          }}
+            className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors">
+            Study Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-xl mx-auto px-4 py-8 fade-in">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={onFinish}
+          className="p-2 rounded-xl hover:bg-slate-200 text-slate-500 transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="flex-1">
+          <div className="flex justify-between text-xs text-slate-500 mb-1.5">
+            <span>{deck.name}</span>
+            <span>{index + 1} / {total}</span>
+          </div>
+          <ProgressBar value={index} max={total} />
+        </div>
+      </div>
+
+      {/* Session stats bar */}
+      <div className="flex justify-center gap-4 text-xs mb-6">
+        <span className="text-green-600 font-medium">✔ {sessionStats.easy} easy</span>
+        <span className="text-amber-600 font-medium">~ {sessionStats.medium} medium</span>
+        <span className="text-red-600 font-medium">✗ {sessionStats.hard} hard</span>
+      </div>
+
+      {/* Flip Card */}
+      <div className="flip-card mb-6">
+        <div className={`flip-inner ${flipped ? 'flipped' : ''}`}>
+          {/* Front – Question */}
+          <div className="flip-face bg-white rounded-2xl border-2 border-indigo-200 shadow-lg p-8 flex flex-col items-center justify-center min-h-64">
+            <div className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-4">Question</div>
+            {card?.topic && (
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full mb-3">{card.topic}</span>
+            )}
+            <p className="text-lg font-medium text-slate-800 text-center leading-relaxed">{card?.question}</p>
+            <div className="mt-4">
+              <Badge diff={card?.difficulty || 'new'} />
+            </div>
+          </div>
+
+          {/* Back – Answer */}
+          <div className="flip-face flip-back bg-indigo-600 rounded-2xl shadow-lg p-8 flex flex-col items-center justify-center min-h-64">
+            <div className="text-xs font-semibold text-indigo-200 uppercase tracking-wider mb-4">Answer</div>
+            <p className="text-lg font-medium text-white text-center leading-relaxed">{card?.answer}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      {!revealed ? (
+        <button onClick={revealAnswer}
+          className="w-full py-3 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-sm text-sm">
+          Reveal Answer
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-center text-sm text-slate-500 font-medium">How well did you remember it?</p>
+          <div className="grid grid-cols-3 gap-3">
+            <button onClick={() => rate('hard')}
+              className="py-3 bg-red-50 border-2 border-red-200 text-red-700 font-semibold rounded-xl hover:bg-red-100 hover:border-red-400 transition-all text-sm">
+              <div className="text-lg mb-0.5">😰</div>
+              Hard
+            </button>
+            <button onClick={() => rate('medium')}
+              className="py-3 bg-amber-50 border-2 border-amber-200 text-amber-700 font-semibold rounded-xl hover:bg-amber-100 hover:border-amber-400 transition-all text-sm">
+              <div className="text-lg mb-0.5">🤔</div>
+              Medium
+            </button>
+            <button onClick={() => rate('easy')}
+              className="py-3 bg-green-50 border-2 border-green-200 text-green-700 font-semibold rounded-xl hover:bg-green-100 hover:border-green-400 transition-all text-sm">
+              <div className="text-lg mb-0.5">😊</div>
+              Easy
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Progress Summary Screen ───────────────────────────────────────────────────
+function ProgressScreen({ deck, onBack }) {
+  const cards = storage.getCards(deck.id);
+  const total = cards.length;
+  const reviewed = cards.filter(c => c.timesReviewed > 0).length;
+  const byDiff = { easy: 0, medium: 0, hard: 0, new: 0 };
+  cards.forEach(c => { byDiff[c.difficulty] = (byDiff[c.difficulty] || 0) + 1; });
+  const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
+
+  const topics = {};
+  cards.forEach(c => {
+    const t = c.topic || 'Uncategorized';
+    if (!topics[t]) topics[t] = { easy: 0, medium: 0, hard: 0, new: 0 };
+    topics[t][c.difficulty]++;
+  });
+
+  const totalReviews = cards.reduce((sum, c) => sum + c.timesReviewed, 0);
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8 fade-in">
+      <div className="flex items-center gap-3 mb-8">
+        <button onClick={onBack}
+          className="p-2 rounded-xl hover:bg-slate-200 text-slate-500 transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">Progress – {deck.name}</h1>
+          <p className="text-sm text-slate-500">Your study statistics</p>
+        </div>
+      </div>
+
+      {/* Overall progress */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-5">
+        <h2 className="font-semibold text-slate-700 mb-4">Overall Progress</h2>
+        <div className="flex items-end gap-4 mb-3">
+          <div className="text-4xl font-bold text-indigo-600">{pct}%</div>
+          <div className="text-sm text-slate-500 pb-1">{reviewed} of {total} cards reviewed</div>
+        </div>
+        <ProgressBar value={reviewed} max={total} />
+        <p className="text-xs text-slate-400 mt-2">{totalReviews} total review{totalReviews !== 1 ? 's' : ''}</p>
+      </div>
+
+      {/* Difficulty breakdown */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-5">
+        <h2 className="font-semibold text-slate-700 mb-4">Difficulty Breakdown</h2>
+        <div className="space-y-3">
+          {[
+            { key: 'hard', label: 'Hard', color: 'bg-red-500', textColor: 'text-red-600' },
+            { key: 'medium', label: 'Medium', color: 'bg-amber-500', textColor: 'text-amber-600' },
+            { key: 'easy', label: 'Easy', color: 'bg-green-500', textColor: 'text-green-600' },
+            { key: 'new', label: 'Not yet reviewed', color: 'bg-blue-400', textColor: 'text-blue-600' },
+          ].map(({ key, label, color, textColor }) => (
+            <div key={key} className="flex items-center gap-3">
+              <div className="w-24 text-sm text-slate-600 shrink-0">{label}</div>
+              <div className="flex-1 bg-slate-100 rounded-full h-2.5">
+                <div className={`${color} h-2.5 rounded-full transition-all`}
+                  style={{ width: total === 0 ? '0%' : `${(byDiff[key] / total) * 100}%` }} />
+              </div>
+              <div className={`text-sm font-semibold ${textColor} w-8 text-right shrink-0`}>{byDiff[key]}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* By topic */}
+      {Object.keys(topics).length > 1 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6">
+          <h2 className="font-semibold text-slate-700 mb-4">By Topic</h2>
+          <div className="space-y-3">
+            {Object.entries(topics).map(([topic, counts]) => {
+              const topicTotal = counts.easy + counts.medium + counts.hard + counts.new;
+              return (
+                <div key={topic} className="border border-slate-100 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-slate-700">{topic}</span>
+                    <span className="text-xs text-slate-400">{topicTotal} card{topicTotal !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {counts.hard > 0 && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{counts.hard} hard</span>}
+                    {counts.medium > 0 && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{counts.medium} medium</span>}
+                    {counts.easy > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{counts.easy} easy</span>}
+                    {counts.new > 0 && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{counts.new} new</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Root App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [decks, setDecks] = useState(() => storage.getDecks());
+  const [view, setView] = useState('home'); // 'home' | 'deck' | 'study' | 'progress'
+  const [activeDeckId, setActiveDeckId] = useState(null);
+
+  const activeDeck = decks.find(d => d.id === activeDeckId) || null;
+
+  const reload = () => setDecks(storage.getDecks());
+
+  const createDeck = (data) => {
+    const d = { id: uid(), name: data.name, description: data.description, createdAt: now() };
+    const updated = [...decks, d];
+    storage.saveDecks(updated);
+    setDecks(updated);
+  };
+
+  const editDeck = (id, data) => {
+    const updated = decks.map(d => d.id === id ? { ...d, ...data } : d);
+    storage.saveDecks(updated);
+    setDecks(updated);
+  };
+
+  const deleteDeck = (id) => {
+    const updated = decks.filter(d => d.id !== id);
+    storage.saveDecks(updated);
+    storage.deleteCardsByDeck(id);
+    setDecks(updated);
+    if (activeDeckId === id) { setActiveDeckId(null); setView('home'); }
+  };
+
+  const importDecks = (data) => {
+    const currentDecks = storage.getDecks();
+    const newDecks = data.map(d => ({
+      id: uid(),
+      name: d.deckName,
+      description: d.deckDescription || '',
+      createdAt: now(),
+    }));
+    storage.saveDecks([...currentDecks, ...newDecks]);
+
+    newDecks.forEach((deck, i) => {
+      const cards = (data[i].cards || []).map(c => ({
+        id: uid(),
+        deckId: deck.id,
+        question: c.question,
+        answer: c.answer,
+        topic: c.topic || '',
+        difficulty: 'new',
+        timesReviewed: 0,
+        lastReviewedAt: null,
+        createdAt: now(),
+      }));
+      storage.saveCards(deck.id, cards);
+    });
+
+    setDecks(storage.getDecks());
+  };
+
+  const selectDeck = (id) => { setActiveDeckId(id); setView('deck'); };
+  const startStudy = (id) => { setActiveDeckId(id); setView('study'); };
+  const viewProgress = (id) => { setActiveDeckId(id); setView('progress'); };
+  const goHome = () => { setView('home'); setActiveDeckId(null); };
+  const goToDeck = () => setView('deck');
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {view === 'home' && (
+        <DeckListScreen
+          decks={decks}
+          onSelectDeck={selectDeck}
+          onCreateDeck={createDeck}
+          onEditDeck={editDeck}
+          onDeleteDeck={deleteDeck}
+          onImport={importDecks}
+        />
+      )}
+      {view === 'deck' && activeDeck && (
+        <DeckDetailScreen
+          deck={activeDeck}
+          onBack={goHome}
+          onStartStudy={startStudy}
+          onViewProgress={viewProgress}
+        />
+      )}
+      {view === 'study' && activeDeck && (
+        <StudyModeScreen
+          deck={activeDeck}
+          onFinish={goToDeck}
+        />
+      )}
+      {view === 'progress' && activeDeck && (
+        <ProgressScreen
+          deck={activeDeck}
+          onBack={goToDeck}
+        />
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
